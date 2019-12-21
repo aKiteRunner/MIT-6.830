@@ -2,6 +2,9 @@ package simpledb;
 
 import java.util.*;
 import java.io.*;
+import java.lang.Math;
+import java.util.logging.Logger;
+
 
 /**
  * Each instance of HeapPage stores data for one page of HeapFiles and 
@@ -12,6 +15,7 @@ import java.io.*;
  *
  */
 public class HeapPage implements Page {
+    Logger log = Logger.getGlobal();
 
     final HeapPageId pid;
     final TupleDesc td;
@@ -67,8 +71,7 @@ public class HeapPage implements Page {
     */
     private int getNumTuples() {        
         // some code goes here
-        return 0;
-
+        return (BufferPool.getPageSize() * 8) / (td.getSize() * 8 + 1);
     }
 
     /**
@@ -78,8 +81,7 @@ public class HeapPage implements Page {
     private int getHeaderSize() {        
         
         // some code goes here
-        return 0;
-                 
+        return (getNumTuples() - 1) / 8 + 1;
     }
     
     /** Return a view of this page before it was modified
@@ -112,7 +114,7 @@ public class HeapPage implements Page {
      */
     public HeapPageId getId() {
     // some code goes here
-    throw new UnsupportedOperationException("implement this");
+        return pid;
     }
 
     /**
@@ -282,7 +284,15 @@ public class HeapPage implements Page {
      */
     public int getNumEmptySlots() {
         // some code goes here
-        return 0;
+        // count 1s in header
+        int cnt = 0;
+        for (byte b : header) {
+            while (b != 0) {
+                b &= b - 1;
+                cnt++;
+            }
+        }
+        return numSlots - cnt;
     }
 
     /**
@@ -290,7 +300,9 @@ public class HeapPage implements Page {
      */
     public boolean isSlotUsed(int i) {
         // some code goes here
-        return false;
+        int idx = i / 8;
+        int offset = i % 8;
+        return (header[idx] & (1 << offset)) != 0;
     }
 
     /**
@@ -307,7 +319,38 @@ public class HeapPage implements Page {
      */
     public Iterator<Tuple> iterator() {
         // some code goes here
-        return null;
+        return new TupleIterator();
+    }
+
+    private class TupleIterator implements Iterator<Tuple> {
+        private int idx;
+
+        public TupleIterator() {
+            idx = 0;
+            findNext();
+        }
+
+        public boolean hasNext() {
+            return idx != numSlots;
+        }
+
+        public Tuple next() {
+            Tuple t = tuples[idx];
+            idx++;
+            findNext();
+            return t;
+        }
+
+        public void remove() {
+            throw new UnsupportedOperationException("unimplemented");
+        }
+
+        private void findNext() {
+            while (idx < numSlots) {
+                if (isSlotUsed(idx)) break;
+                idx++;
+            }
+        }
     }
 
 }
