@@ -39,6 +39,7 @@ public class HeapPageId implements PageId {
      *   key in a hash table in the BufferPool, for example.)
      * @see BufferPool
      */
+    @Override
     public int hashCode() {
         // some code goes here
         return (tableId + " " + pgNo).hashCode();

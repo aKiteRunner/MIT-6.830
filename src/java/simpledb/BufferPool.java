@@ -2,8 +2,8 @@ package simpledb;
 
 import java.io.*;
 
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -27,7 +27,7 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
-    private final Map<PageId, Page> pool;
+    private final LRUCache<PageId, Page> pool;
 
     private final int numPages;
     /**
@@ -38,7 +38,7 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
-        this.pool = new ConcurrentHashMap<>();
+        this.pool = new LRUCache<>(numPages);
     }
     
     public static int getPageSize() {
@@ -75,16 +75,23 @@ public class BufferPool {
         // some code goes here
         if (!pool.containsKey(pid)) {
             // insufficient space
-            if (pool.size() == numPages) {
-                throw new UnsupportedOperationException("unimplemented");
-            } else {
-                DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
-                Page p = f.readPage(pid);
-                if (p == null) throw new IllegalArgumentException();
-                pool.put(pid, p);
-            }
+            DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
+            Page p = f.readPage(pid);
+            if (p == null) throw new IllegalArgumentException("non-exist");
+            poolPut(pid, p);
         }
         return pool.get(pid);
+    }
+
+    private void poolPut(PageId pid, Page p) throws DbException {
+        Page oldPage = pool.put(pid, p);
+        if (oldPage != null) {
+            try {
+                flushPage(oldPage.getId());
+            } catch (IOException e) {
+                throw new DbException("flush error");
+            }
+        }
     }
 
     /**
@@ -150,6 +157,15 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        ArrayList<Page> pages = f.insertTuple(tid, t);
+        for (Page page : pages) {
+//            page.markDirty(true, tid);
+//            if (!pool.containsKey(page.getId()) && pool.size() == numPages) {
+//                evictPage();
+//            }
+            poolPut(page.getId(), page);
+        }
     }
 
     /**
@@ -169,6 +185,13 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        int tableid = t.getRecordId().getPageId().getTableId();
+        DbFile f = Database.getCatalog().getDatabaseFile(tableid);
+        ArrayList<Page> pages = f.deleteTuple(tid, t);
+        for (Page page : pages) {
+            page.markDirty(true, tid);
+            poolPut(page.getId(), page);
+        }
     }
 
     /**
@@ -179,7 +202,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        for (PageId pid : pool.keySet()) {
+            flushPage(pid);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -193,6 +218,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        pool.remove(pid);
     }
 
     /**
@@ -202,6 +228,12 @@ public class BufferPool {
     private synchronized  void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        // invalid page
+        if (!pool.containsKey(pid)) return;
+        Page p = pool.get(pid);
+        DbFile table = Database.getCatalog().getDatabaseFile(p.getId().getTableId());
+        table.writePage(p);
+        p.markDirty(false, null);
     }
 
     /** Write all pages of the specified transaction to disk.

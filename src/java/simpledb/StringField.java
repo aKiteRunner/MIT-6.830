@@ -99,7 +99,7 @@ public class StringField implements Field {
 			return cmpVal <= 0;
 
 		case LIKE:
-			return value.indexOf(iVal.value) >= 0;
+			return value.contains(iVal.value);
 		}
 
 		return false;
