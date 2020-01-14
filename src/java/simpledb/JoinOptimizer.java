@@ -111,7 +111,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -157,6 +157,22 @@ public class JoinOptimizer {
             Map<String, Integer> tableAliasToId) {
         int card = 1;
         // some code goes here
+        switch (joinOp) {
+            case EQUALS:
+                if (t1pkey && t2pkey) card = Math.min(card1, card2);
+                else if (t1pkey) card = card2;
+                else if (t2pkey) card = card1;
+                else card = Math.max(card1, card2);
+                break;
+            case NOT_EQUALS:
+                if (t1pkey && t2pkey) card = card1 * card2 - Math.min(card1, card2);
+                else if (t1pkey) card = card1 * card2 - card2;
+                else if (t2pkey) card = card1 * card2 - card1;
+                else card = card1 * card2 - Math.max(card1, card2);
+                break;
+            default:
+                card = card1 * card2 / 3;
+        }
         return card <= 0 ? 1 : card;
     }
 
@@ -221,7 +237,28 @@ public class JoinOptimizer {
 
         // some code goes here
         //Replace the following
-        return joins;
+        if (explain) return joins;
+        PlanCache pc = new PlanCache();
+        int cnt = joins.size();
+        for (int size = 1; size <= cnt; size++) {
+            Set<Set<LogicalJoinNode>> subsets = enumerateSubsets(joins, size);
+            for (Set<LogicalJoinNode> s : subsets) {
+                double bestCostSoFar = Double.MAX_VALUE;
+                CostCard bestCostCard = new CostCard();
+                for (LogicalJoinNode node : s) {
+                    CostCard costCard = computeCostAndCardOfSubplan(stats, filterSelectivities, node, s, bestCostSoFar, pc);
+                    if (costCard != null) {
+                        bestCostSoFar = costCard.cost;
+                        bestCostCard = costCard;
+                    }
+                }
+                if (bestCostSoFar != Double.MAX_VALUE) {
+                    pc.addPlan(s, bestCostCard.cost, bestCostCard.card, bestCostCard.plan);
+                }
+                if (size == cnt) return bestCostCard.plan;
+            }
+        }
+        return null;
     }
 
     // ===================== Private Methods =================================
@@ -299,7 +336,7 @@ public class JoinOptimizer {
             t2card = table2Alias == null ? 0 : stats.get(table2Name)
                     .estimateTableCardinality(
                             filterSelectivities.get(j.t2Alias));
-            rightPkey = table2Alias == null ? false : isPkey(table2Alias,
+            rightPkey = table2Alias != null && isPkey(table2Alias,
                     j.f2PureName);
         } else {
             // news is not empty -- figure best way to join j to news
@@ -327,7 +364,7 @@ public class JoinOptimizer {
                 t2card = j.t2Alias == null ? 0 : stats.get(table2Name)
                         .estimateTableCardinality(
                                 filterSelectivities.get(j.t2Alias));
-                rightPkey = j.t2Alias == null ? false : isPkey(j.t2Alias,
+                rightPkey = j.t2Alias != null && isPkey(j.t2Alias,
                         j.f2PureName);
             } else if (doesJoin(prevBest, j.t2Alias)) { // j.t2 is in prevbest
                                                         // (both

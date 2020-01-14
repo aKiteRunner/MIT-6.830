@@ -1,8 +1,14 @@
 package simpledb;
 
+import java.util.Arrays;
+
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
+
+    private int buckets, min, max, ntups;
+    private int[] height;
+    private int width, lastWidth;
 
     /**
      * Create a new IntHistogram.
@@ -22,6 +28,14 @@ public class IntHistogram {
      */
     public IntHistogram(int buckets, int min, int max) {
     	// some code goes here
+        this.buckets = buckets;
+        this.min = min;
+        this.max = max;
+        this.height = new int[buckets];
+        width = (max - min + 1) / buckets;
+        width = Math.max(1, width);
+        lastWidth = (max - min + 1) - (buckets - 1) * width;
+        ntups = 0;
     }
 
     /**
@@ -30,6 +44,9 @@ public class IntHistogram {
      */
     public void addValue(int v) {
     	// some code goes here
+        int idx = Math.min((v - min) / width, buckets - 1);
+        ntups++;
+        height[idx]++;
     }
 
     /**
@@ -45,7 +62,51 @@ public class IntHistogram {
     public double estimateSelectivity(Predicate.Op op, int v) {
 
     	// some code goes here
-        return -1.0;
+        if (ntups == 0) return 0;
+        double res = 0.0;
+        int idx = Math.min((v - min) / width, buckets - 1);
+        int w = idx < buckets - 1 ? width : lastWidth;
+        switch (op) {
+            case EQUALS:
+                res = estimateEqual(idx, w, v);
+                break;
+            case LESS_THAN:
+                res = estimateLessThan(idx, w, v);
+                break;
+            case LESS_THAN_OR_EQ:
+                res = estimateEqual(idx, w, v) + estimateLessThan(idx, w, v);
+                break;
+            case NOT_EQUALS:
+                res = 1.0 - estimateEqual(idx, w, v);
+                break;
+            case GREATER_THAN:
+                res = 1.0 - estimateEqual(idx, w, v) - estimateLessThan(idx, w, v);
+                break;
+            case GREATER_THAN_OR_EQ:
+                res = 1.0 - estimateLessThan(idx, w, v);
+                break;
+            default:
+                res = -1.0;
+        }
+        return res;
+    }
+
+    private double estimateEqual(int idx, int w, int v) {
+        if (v > max || v < min) return 0;
+        return 1.0 * height[idx] / w / ntups;
+    }
+
+    private double estimateLessThan(int idx, int w, int v) {
+        if (v >= max) return 1.0;
+        if (v <= min) return 0;
+        double res = 0;
+        for (int i = 0; i < idx; i++) {
+            res += height[i];
+        }
+        int left = width * idx + min;
+        int cnt = v - left;
+        res += 1.0 * height[idx] * cnt / w;
+        return res / ntups;
     }
     
     /**
@@ -67,6 +128,6 @@ public class IntHistogram {
      */
     public String toString() {
         // some code goes here
-        return null;
+        return Arrays.toString(height);
     }
 }

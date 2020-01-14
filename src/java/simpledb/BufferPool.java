@@ -231,6 +231,7 @@ public class BufferPool {
         // invalid page
         if (!pool.containsKey(pid)) return;
         Page p = pool.get(pid);
+        if (p.isDirty() == null) return;
         DbFile table = Database.getCatalog().getDatabaseFile(p.getId().getTableId());
         table.writePage(p);
         p.markDirty(false, null);
