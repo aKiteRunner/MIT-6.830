@@ -27,7 +27,9 @@ public class BufferPool {
     constructor instead. */
     public static final int DEFAULT_PAGES = 50;
 
-    private final LRUCache<PageId, Page> pool;
+    private final ConcurrentHashMap<PageId, Page> pool;
+
+    private final LockManager manager;
 
     private final int numPages;
     /**
@@ -38,7 +40,8 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
-        this.pool = new LRUCache<>(numPages);
+        this.pool = new ConcurrentHashMap<>(numPages);
+        this.manager = new LockManager();
     }
     
     public static int getPageSize() {
@@ -70,9 +73,10 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
+    public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        manager.lock(tid, pid, perm);
         if (!pool.containsKey(pid)) {
             // insufficient space
             DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
@@ -84,14 +88,10 @@ public class BufferPool {
     }
 
     private void poolPut(PageId pid, Page p) throws DbException {
-        Page oldPage = pool.put(pid, p);
-        if (oldPage != null) {
-            try {
-                flushPage(oldPage.getId());
-            } catch (IOException e) {
-                throw new DbException("flush error");
-            }
+        if (!pool.containsKey(pid) && pool.size() == numPages) {
+            evictPage();
         }
+        pool.put(pid, p);
     }
 
     /**
@@ -106,6 +106,11 @@ public class BufferPool {
     public  void releasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        manager.unlock(tid, pid);
+    }
+
+    public void releaseReadLock(TransactionId tid, PageId pid) {
+        manager.readUnlock(tid, pid);
     }
 
     /**
@@ -116,13 +121,18 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return manager.holdsLock(tid, p);
+    }
+
+    public boolean holdsReadLock(TransactionId tid, PageId pid) {
+        return manager.holdsLock(tid, pid, Permissions.READ_ONLY);
     }
 
     /**
@@ -136,6 +146,12 @@ public class BufferPool {
         throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        if (commit) {
+            flushPages(tid);
+        } else {
+            restorePages(tid);
+        }
+        manager.releaseAll(tid);
     }
 
     /**
@@ -160,10 +176,7 @@ public class BufferPool {
         DbFile f = Database.getCatalog().getDatabaseFile(tableId);
         ArrayList<Page> pages = f.insertTuple(tid, t);
         for (Page page : pages) {
-//            page.markDirty(true, tid);
-//            if (!pool.containsKey(page.getId()) && pool.size() == numPages) {
-//                evictPage();
-//            }
+            page.markDirty(true, tid);
             poolPut(page.getId(), page);
         }
     }
@@ -207,6 +220,10 @@ public class BufferPool {
         }
     }
 
+    public void updateToWriteLock(TransactionId tid, PageId pid) {
+        manager.updateToWriteLock(tid, pid);
+    }
+
     /** Remove the specific page id from the buffer pool.
         Needed by the recovery manager to ensure that the
         buffer pool doesn't keep a rolled back page in its
@@ -237,11 +254,25 @@ public class BufferPool {
         p.markDirty(false, null);
     }
 
+    /**
+     * Restore all pages of the specified transaction from disk.
+     * @param tid an ID indicating the transaction
+     */
+    private synchronized void restorePages(TransactionId tid) {
+        for (PageId pid : manager.lockedPages(tid)) {
+            // simply discard changes
+            discardPage(pid);
+        }
+    }
+
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        for (PageId pid : manager.lockedPages(tid)) {
+            flushPage(pid);
+        }
     }
 
     /**
@@ -251,6 +282,16 @@ public class BufferPool {
     private synchronized  void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        PageId pid = null;
+        for (Map.Entry<PageId, Page> entry : pool.entrySet()) {
+            Page p = entry.getValue();
+            if (p.isDirty() == null) {
+                pid = entry.getKey();
+                break;
+            }
+        }
+        if (pid == null) throw new DbException("all pages are dirty");
+        discardPage(pid);
     }
 
 }

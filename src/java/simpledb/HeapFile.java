@@ -122,18 +122,22 @@ public class HeapFile implements DbFile {
         for (int i = numPages() - 1; i >= 0; i--) {
             // look for a empty slot
             HeapPageId hpid = new HeapPageId(id, i);
-            HeapPage p = (HeapPage) Database.getBufferPool().getPage(tid, hpid, null);
+            HeapPage p = (HeapPage) Database.getBufferPool().getPage(tid, hpid, Permissions.READ_ONLY);
             if (p.getNumEmptySlots() > 0) {
+                Database.getBufferPool().updateToWriteLock(tid, p.pid);
                 p.insertTuple(t);
                 res.add(p);
                 return res;
+            }
+            if (Database.getBufferPool().holdsReadLock(tid, hpid)) {
+                Database.getBufferPool().releaseReadLock(tid, hpid);
             }
         }
         // no more empty page
         // extend file
         HeapPageId hpid = new HeapPageId(id, numPages());
         rawFile.setLength(backfile.length() + pageSize);
-        HeapPage newPage = (HeapPage) Database.getBufferPool().getPage(tid, hpid, null);
+        HeapPage newPage = (HeapPage) Database.getBufferPool().getPage(tid, hpid, Permissions.READ_WRITE);
         newPage.insertTuple(t);
         res.add(newPage);
         return res;
@@ -144,7 +148,7 @@ public class HeapFile implements DbFile {
             TransactionAbortedException {
         // some code goes here
         if (t.getRecordId().getPageId().getTableId() != id) throw new DbException("mismatch table id");
-        Page p = Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), null);
+        Page p = Database.getBufferPool().getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
         HeapPage hp = (HeapPage)p;
         hp.deleteTuple(t);
         ArrayList<Page> res = new ArrayList<>(1);
@@ -174,7 +178,7 @@ public class HeapFile implements DbFile {
         private void readPage()
                 throws DbException, TransactionAbortedException {
             while (pidx < n && (it == null || !it.hasNext())) {
-                Page p = Database.getBufferPool().getPage(tid, new HeapPageId(id, pidx), null);
+                Page p = Database.getBufferPool().getPage(tid, new HeapPageId(id, pidx), Permissions.READ_ONLY);
                 if (! (p instanceof HeapPage)) throw new DbException("HeapFile requires HeapPage");
                 HeapPage hp = (HeapPage) p;
                 it = hp.iterator();

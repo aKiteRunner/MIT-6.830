@@ -1,5 +1,7 @@
 package simpledb;
 
+import java.io.IOException;
+
 /**
  * Inserts tuples read from the child operator into the tableId specified in the
  * constructor
@@ -11,6 +13,7 @@ public class Insert extends Operator {
     private OpIterator child;
     private int tableId;
     private TupleDesc td;
+    private boolean inserted;
 
     /**
      * Constructor.
@@ -34,6 +37,7 @@ public class Insert extends Operator {
         this.child = child;
         this.tableId = tableId;
         this.td = new TupleDesc(new Type[]{Type.INT_TYPE});
+        this.inserted = false;
     }
 
     public TupleDesc getTupleDesc() {
@@ -73,17 +77,19 @@ public class Insert extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
+        if (inserted) return null;
         int cnt = 0;
-        while (child.hasNext()) {
-            try {
+        try {
+            while (child.hasNext()) {
                 Database.getBufferPool().insertTuple(tid, tableId, child.next());
                 cnt++;
-            } catch (Exception e) {
-                e.printStackTrace();
             }
+        } catch (IOException e) {
+            throw new TransactionAbortedException();
         }
         Tuple res = new Tuple(td);
         res.setField(0, new IntField(cnt));
+        inserted = true;
         return res;
     }
 
